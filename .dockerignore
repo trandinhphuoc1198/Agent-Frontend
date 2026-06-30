@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Test output
+coverage/
+
+# Local env files
+.env
+.env.*
+
+# Vite cache
+.vite/
+
+# Test files
+tests/
+
+# Misc
+*.md
