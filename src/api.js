@@ -5,7 +5,7 @@
  *   connected          — session established
  *   token              — streaming LLM text chunk      { content }
  *   tool_start         — tool invocation begins         { tool, input }
- *   tool_end           — tool invocation ends           { tool, output }
+ *   tool_end           — tool invocation ends           { tool, output, error? }
  *   permission_request — shell permission gate          { command }
  *   done               — turn complete
  *   history_compacted  — chat history was summarized
@@ -25,7 +25,7 @@ export class AgentSocket {
    *   onConnected?: () => void,
    *   onToken?: (content: string) => void,
    *   onToolStart?: (tool: string, input: object) => void,
-   *   onToolEnd?: (tool: string, output: string) => void,
+   *   onToolEnd?: (tool: string, output: string, error?: boolean) => void,
    *   onPermissionRequest?: (command: string) => void,
    *   onDone?: () => void,
    *   onHistoryCompacted?: (summary: string) => void,
@@ -57,7 +57,7 @@ export class AgentSocket {
       if (type === "connected") cb.onConnected?.();
       else if (type === "token") cb.onToken?.(msg.content ?? "");
       else if (type === "tool_start") cb.onToolStart?.(msg.tool, msg.input ?? {});
-      else if (type === "tool_end") cb.onToolEnd?.(msg.tool, msg.output ?? "");
+      else if (type === "tool_end") cb.onToolEnd?.(msg.tool, msg.output ?? "", Boolean(msg.error));
       else if (type === "permission_request") cb.onPermissionRequest?.(msg.command ?? "");
       else if (type === "done") cb.onDone?.();
       else if (type === "history_compacted") cb.onHistoryCompacted?.(msg.summary ?? "");

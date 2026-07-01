@@ -64,6 +64,10 @@ export default function ConversationList({
   };
 
   const handleRenameSubmit = async (id) => {
+    // Guards against double submission: Enter calls this directly and then
+    // triggers a blur, which would otherwise call this a second time.
+    if (editingId !== id) return;
+    setEditingId(null);
     const title = editTitle.trim() || "Untitled";
     try {
       const res = await fetch(`/api/conversations/${id}`, {
@@ -80,7 +84,6 @@ export default function ConversationList({
       setError("Rename failed");
       setTimeout(() => setError(null), 2000);
     }
-    setEditingId(null);
   };
 
   return (

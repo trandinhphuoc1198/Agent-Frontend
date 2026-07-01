@@ -72,6 +72,24 @@ describe("ToolCallCard", () => {
     expect(screen.queryByText("Input")).not.toBeInTheDocument();
   });
 
+  it("shows 'error' instead of 'done' when the tool call failed", () => {
+    render(
+      <ToolCallCard
+        toolCall={{ ...baseTool, output: "division by zero", pending: false, error: true }}
+      />
+    );
+    expect(screen.getByText("error")).toBeInTheDocument();
+    expect(screen.queryByText("done")).not.toBeInTheDocument();
+  });
+
+  it("still shows 'done' when the tool call succeeded", () => {
+    render(
+      <ToolCallCard toolCall={{ ...baseTool, output: "4", pending: false, error: false }} />
+    );
+    expect(screen.getByText("done")).toBeInTheDocument();
+    expect(screen.queryByText("error")).not.toBeInTheDocument();
+  });
+
   it("renders aria-expanded attribute on the button", () => {
     render(<ToolCallCard toolCall={baseTool} />);
     const btn = screen.getByRole("button");

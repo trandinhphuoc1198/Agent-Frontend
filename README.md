@@ -1,113 +1,135 @@
-# AI Agent — Project Overview
+# AI Agent — Frontend
 
-## What It Is
-A full-stack AI chat agent with tool-calling, RAG (Retrieval-Augmented Generation), and real-time WebSocket streaming.
+A React (Vite + Tailwind) chat UI for a tool-calling AI agent backend. Streams
+LLM tokens and tool-call events over WebSocket, gates shell commands behind a
+permission modal, and persists conversation history via a small REST API.
 
 ## Stack
-- **Backend**: Python, FastAPI, LangChain (LangGraph `create_agent`), ChromaDB, Uvicorn
-- **Frontend**: React (Vite), Tailwind CSS
-- **LLM Provider**: OpenRouter (`https://openrouter.ai/api/v1`) via `ChatOpenAI` with `OPENROUTER_API_KEY`
-- **Embeddings**: `text-embedding-3-small` via OpenRouter (same key, `OPENAI_API_KEY` field also exists as fallback)
-- **Vector DB**: ChromaDB persistent at `chroma_db/` (project root)
+
+- **React 18** + **Vite 5**
+- **Tailwind CSS** for styling
+- **react-markdown** + **remark-gfm** + **react-syntax-highlighter** for
+  rendering assistant messages
+- **Vitest** + **React Testing Library** for tests
 
 ## Directory Layout
+
 ```
-/ (project root)
-├── .gitignore
-├── AGENTS.md
-├── README.md
-├── run_all.ps1
-├── backend/
-│   ├── .env                    # secrets & config (never committed)
-│   ├── .env.example            # template for .env
-│   ├── main.py                 # FastAPI app, lifespan (RAG startup + watcher), REST + WebSocket endpoints
-│   ├── agent.py                # LangGraph agent, per-session history, RAG injection, LLM logging
-│   ├── config.py               # Pydantic Settings (ENV_FILE = backend/.env)
-│   ├── requirements.txt
-│   ├── tools/
-│   │   ├── __init__.py         # ALL_TOOLS registry
-│   │   ├── calculator.py       # numexpr-based calculator tool
-│   │   ├── file_ops.py         # read/write/list/delete — sandboxed to WORKSPACE_DIR
-│   │   ├── shell.py            # run_command with permission gate (bypass | permission mode)
-│   │   ├── web_search.py       # DuckDuckGo search (ddgs)
-│   │   ├── web_scrape.py       # URL scraper (requests + html2text)
-│   │   └── rag_search.py       # search_knowledge_base LangChain tool
-│   ├── rag/
-│   │   ├── embeddings.py       # OpenAIEmbeddings pointed at OpenRouter
-│   │   ├── chroma_client.py    # PersistentClient singleton + get_vectorstore()
-│   │   ├── ingestor.py         # file loaders (.txt/.md/plain read, .pdf/PyPDF), chunking, hash dedup, upsert
-│   │   ├── retriever.py        # similarity_search_with_score → formatted string
-│   │   └── watcher.py          # watchdog Observer watching rag_docs/; on create/modify→ingest, on delete→remove
-│   ├── rag_docs/               # drop .txt/.md/.pdf here → auto-ingested at startup + live via watcher
-│   ├── chroma_db/              # ChromaDB persistent storage (gitignored)
-│   ├── conversations/          # persisted conversation history
-│   ├── workspace/              # file-tools sandbox (agent read/write restricted here)
-│   ├── skills/                 # optional skill definitions
-│   └── logs/                   # JSONL LLM request/response logs (llm-YYYY-MM-DD.jsonl)
-└── frontend/
-    ├── src/
-    │   ├── api.js              # AgentSocket WebSocket client class
-    │   ├── App.jsx             # top-level state: messages, streaming, permissions, session
-    │   └── components/         # ChatWindow, MessageBubble, ToolCallCard, PermissionModal, SettingsPanel
-    └── vite.config.js          # proxies /api and /ws to http://127.0.0.1:8000
+frontend/
+├── src/
+│   ├── main.jsx                    # React root
+│   ├── App.jsx                     # top-level state: messages, streaming,
+│   │                                #   permissions, session, sidebar/input resize
+│   ├── api.js                      # AgentSocket — WebSocket client class
+│   ├── index.css                   # Tailwind entrypoint + markdown styles
+│   └── components/
+│       ├── ChatWindow.jsx          # message list, autoscroll, "thinking" dots
+│       ├── MessageBubble.jsx       # user/assistant message rendering (markdown, code)
+│       ├── ToolCallCard.jsx        # collapsible tool call input/output
+│       ├── PermissionModal.jsx     # shell command approve/deny dialog
+│       ├── ConversationList.jsx    # sidebar history: list/select/rename/delete
+│       └── SettingsPanel.jsx       # model, command mode, tool toggles
+├── tests/                          # Vitest specs, one per component + api.js
+├── index.html
+├── vite.config.js                  # dev server + proxy to backend on :8000
+├── tailwind.config.js
+├── postcss.config.js
+├── Dockerfile                      # multi-stage build → nginx runtime
+├── nginx.conf                      # reverse proxy template (${BACKEND_URL})
+└── package.json
 ```
-
-## Key Settings (config.py / .env)
-| Env var | Default | Purpose |
-|---|---|---|
-| `OPENROUTER_API_KEY` | sk-placeholder | LLM + embedding calls |
-| `MODEL` | nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free | LangChain model name |
-| `CMD_MODE` | permission | shell tool gate: `bypass` or `permission` |
-| `WORKSPACE_DIR` | `<backend>/workspace` | file_ops sandbox boundary |
-| `LOGS_DIR` | `<backend>/logs` | LLM JSONL log output |
-| `RAG_DOCS_DIR` | `<backend>/rag_docs` | watched folder for knowledge base docs |
-| `CHROMA_PERSIST_DIR` | `<backend>/chroma_db` | ChromaDB storage |
-| `RAG_COLLECTION_NAME` | default | ChromaDB collection |
-| `RAG_TOP_K` | 5 | chunks returned per query |
-
-## Agent Flow (per turn)
-1. Frontend sends `{ type: "message", content }` over WebSocket `/ws/{session_id}`
-2. `main.py` dispatches to `run_agent(session_id, content, ws_send)` (async task)
-3. `agent.py` calls `rag_retrieve(user_message)` → prepends as `SystemMessage` if non-empty
-4. LangGraph agent streams events: `on_chat_model_stream` → `token`, `on_tool_start/end` → `tool_start/tool_end`
-5. Shell tool in `permission` mode sends `permission_request` WS event; frontend shows modal; user reply `{ type: "permission_response", approved }` unblocks the gate
-6. Turn ends with `{ type: "done" }`
-
-## WebSocket Message Protocol
-**Server → Client**: `connected`, `token`, `tool_start`, `tool_end`, `permission_request`, `done`, `error`
-**Client → Server**: `message`, `permission_response`
-
-## ALL_TOOLS (registered in tools/__init__.py)
-`calculator`, `read_file`, `write_file`, `list_directory`, `delete_file`, `run_command`, `web_search`, `scrape_url`, `search_knowledge_base`
-
-## RAG Pipeline
-- **Startup**: lifespan scans `rag_docs/` → ingest only new/changed files (hash-based dedup via `is_file_ingested`)
-- **Live**: watchdog watcher runs concurrently; triggers ingest on file create/modify, removes chunks on delete
-- **Retrieval**: `retriever.retrieve(query)` → `[Source: path]\nchunk\n\n---\n\n...`
-- **Injection**: prepended as SystemMessage before agent run (skipped if KB empty)
-- **Tool**: `search_knowledge_base(query)` also available explicitly to the LLM
 
 ## Dev Setup
-```powershell
-# Backend
-cd backend
-python -m venv .venv && .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
-# Frontend
-cd frontend
+Requires Node 20+ and a running backend (see the backend's own README) on
+`http://localhost:8000`.
+
+```bash
 npm install
-npm run dev   # dev server at :5173 proxied to backend :8000
+npm run dev   # http://localhost:5173, proxies /api and /ws to :8000
 ```
-Or run `.\run_all.ps1` from project root.
+
+Other scripts:
+
+```bash
+npm run build          # production build → dist/
+npm run preview        # preview the production build locally
+npm test                # run tests once (Vitest)
+npm run test:watch      # watch mode
+npm run test:ui         # Vitest UI
+npm run test:coverage   # coverage report
+```
+
+## WebSocket Protocol
+
+The frontend talks to the backend over a single WebSocket per conversation at
+`/ws/{session_id}` (see `src/api.js` for the full client implementation).
+
+**Server → Client**
+
+| Type | Payload | Meaning |
+|---|---|---|
+| `connected` | — | session established |
+| `token` | `{ content }` | streaming LLM text chunk |
+| `tool_start` | `{ tool, input }` | tool invocation begins |
+| `tool_end` | `{ tool, output, error? }` | tool invocation ends; `error: true` marks a failed call |
+| `permission_request` | `{ command }` | shell command awaiting approval |
+| `done` | — | turn complete |
+| `history_compacted` | `{ summary }` | older messages were summarized |
+| `history_restored` | `{ messages, title }` | saved conversation loaded |
+| `error` | `{ content }` | backend error |
+
+**Client → Server**
+
+| Type | Payload | Meaning |
+|---|---|---|
+| `message` | `{ content, images? }` | user chat message (images as base64) |
+| `permission_response` | `{ approved }` | answer to a shell permission gate |
+| `save_messages` | `{ messages, title }` | persist the current conversation |
+| `rename_conversation` | `{ title }` | rename the active conversation |
+
+## REST API (used by the sidebar/settings)
+
+| Endpoint | Used for |
+|---|---|
+| `GET /api/conversations` | list saved conversations |
+| `PATCH /api/conversations/:id` | rename a conversation |
+| `DELETE /api/conversations/:id` | delete a conversation |
+| `GET /api/config`, `PUT /api/config` | model, command mode |
+| `GET /api/tools` | available tools + enabled state |
+
+## Behavior Notes
+
+- Input, image upload, and send are all disabled while the WebSocket is
+  disconnected (`connected === false`); the textarea placeholder switches to
+  "Reconnecting…" so the UI never silently drops a message.
+- Sidebar width and input box height are resizable and persisted to
+  `localStorage` (`ai-agent-sidebar-width`, `ai-agent-input-height`,
+  `ai-agent-sidebar-visible`).
+- On `done`, the frontend closes the streaming message and auto-saves the
+  conversation (auto-titled from the first user message unless renamed) via
+  `save_messages`.
+- Failed tool calls (`tool_end` with `error: true`) render with a red
+  **error** badge in `ToolCallCard` instead of the green **done** badge.
 
 ## Tests
-- Backend: `pytest backend/tests/` (covers agent, config, tools, RAG ingestor/retriever/search/watcher)
-- Frontend: `npm test` in `frontend/` (Vitest, covers all components + api)
 
-## Important Constraints
-- `file_ops.py` rejects any path resolving outside `WORKSPACE_DIR` (security boundary)
-- Shell permission gate uses `asyncio.Event` + `ContextVar` (session_id_var, ws_send_var) injected per turn
-- `config.py` uses `ENV_FILE` module-level variable (tests can monkey-patch it); settings cached as singleton, cleared via `reset_settings()`
-- LLM log entries are JSONL appended to `logs/llm-YYYY-MM-DD.jsonl`
+```bash
+npm test
+```
+
+Covers every component plus the `AgentSocket` WebSocket client (message
+dispatch, tool call lifecycle including the error flag, permission flow).
+
+## Docker
+
+```bash
+docker build -t ai-agent-frontend .
+docker run -p 80:80 -e BACKEND_URL=http://backend:8000 ai-agent-frontend
+```
+
+The image is a multi-stage build: `npm run build` in a Node 20 Alpine stage,
+served by nginx in the runtime stage. `BACKEND_URL` is substituted into
+`nginx.conf` at container start (via `envsubst`) to reverse-proxy `/api/*`
+and `/ws/*` to the backend service, with all other routes falling back to
+`index.html` for client-side routing.

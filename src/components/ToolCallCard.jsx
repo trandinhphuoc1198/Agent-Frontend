@@ -19,7 +19,11 @@ export default function ToolCallCard({ toolCall }) {
           <span className="ml-2 text-yellow-400 animate-pulse">running…</span>
         )}
         {!toolCall.pending && outputStr != null && (
-          <span className="ml-2 text-green-400">done</span>
+          toolCall.error ? (
+            <span className="ml-2 text-red-400">error</span>
+          ) : (
+            <span className="ml-2 text-green-400">done</span>
+          )
         )}
         <span className="ml-auto text-gray-500">{expanded ? "▲" : "▼"}</span>
       </button>
@@ -35,7 +39,11 @@ export default function ToolCallCard({ toolCall }) {
           {outputStr != null && (
             <div>
               <p className="text-gray-500 uppercase tracking-wider mb-1">Output</p>
-              <pre className="bg-gray-950 rounded p-2 text-blue-300 overflow-x-auto whitespace-pre-wrap">
+              <pre
+                className={`bg-gray-950 rounded p-2 overflow-x-auto whitespace-pre-wrap ${
+                  toolCall.error ? "text-red-300" : "text-blue-300"
+                }`}
+              >
                 {outputStr}
               </pre>
             </div>

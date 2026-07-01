@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 async function applyConfig(patch) {
   const res = await fetch("/api/config", {
@@ -20,19 +20,30 @@ export default function SettingsPanel() {
   const [toolsVisible, setToolsVisible] = useState(() =>
     localStorage.getItem("ai-agent-tools-visible") !== "false"
   );
+  // Tracks the last-saved model value so we only auto-save on blur/Enter
+  // when the user actually changed it.
+  const lastSavedModelRef = useRef("");
 
   useEffect(() => {
+    let cancelled = false;
     Promise.all([
       fetch("/api/config").then((r) => r.json()),
       fetch("/api/tools").then((r) => r.json()),
     ])
       .then(([config, tools]) => {
+        if (cancelled) return;
         setModel(config.model ?? "");
+        lastSavedModelRef.current = config.model ?? "";
         setCmdMode(config.cmd_mode ?? "permission");
         setAllTools(tools);
         setEnabledTools(new Set(tools.filter((t) => t.enabled).map((t) => t.name)));
       })
-      .catch(() => setError("Failed to load config"));
+      .catch(() => {
+        if (!cancelled) setError("Failed to load config");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const toggleTool = (name) => {
@@ -44,18 +55,20 @@ export default function SettingsPanel() {
     });
   };
 
-  const handleSave = async () => {
+  // Applies a partial config patch and updates feedback state. Shared by
+  // every auto-save trigger (model blur/Enter, cmd_mode toggle) and the
+  // explicit Save button below (used for tool selection changes).
+  const saveConfig = async (patch) => {
     setError(null);
     try {
-      const res = await fetch("/api/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, cmd_mode: cmdMode, enabled_tools: [...enabledTools] }),
-      });
-      if (!res.ok) throw new Error("Save failed");
-      const data = await res.json();
-      setModel(data.model ?? model);
-      setCmdMode(data.cmd_mode ?? cmdMode);
+      const data = await applyConfig(patch);
+      if (data.model !== undefined) {
+        setModel(data.model);
+        lastSavedModelRef.current = data.model;
+      } else if (patch.model !== undefined) {
+        lastSavedModelRef.current = patch.model;
+      }
+      if (data.cmd_mode !== undefined) setCmdMode(data.cmd_mode);
       if (data.enabled_tools) setEnabledTools(new Set(data.enabled_tools));
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -65,18 +78,28 @@ export default function SettingsPanel() {
     }
   };
 
-  const handleModelBlur = () => {
-    setModel((m) => m.trim());
+  const handleModelBlur = (e) => {
+    const trimmed = e.target.value.trim();
+    setModel(trimmed);
+    if (trimmed !== lastSavedModelRef.current) {
+      saveConfig({ model: trimmed });
+    }
   };
 
   const handleModelKeyDown = (e) => {
     if (e.key === "Enter") {
+      handleModelBlur(e);
       e.target.blur();
     }
   };
 
   const handleCmdModeChange = (mode) => {
     setCmdMode(mode);
+    saveConfig({ cmd_mode: mode });
+  };
+
+  const handleSave = () => {
+    saveConfig({ model, cmd_mode: cmdMode, enabled_tools: [...enabledTools] });
   };
 
   return (

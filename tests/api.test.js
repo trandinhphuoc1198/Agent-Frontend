@@ -141,7 +141,22 @@ describe("AgentSocket", () => {
     MockWebSocket.instances[0].onmessage({
       data: JSON.stringify({ type: "tool_end", tool: "calculator", output: "4" }),
     });
-    expect(onToolEnd).toHaveBeenCalledWith("calculator", "4");
+    expect(onToolEnd).toHaveBeenCalledWith("calculator", "4", false);
+  });
+
+  it("calls onToolEnd with error true when the backend flags a failure", () => {
+    const onToolEnd = vi.fn();
+    const socket = new AgentSocket("s1", { onToolEnd });
+    socket.connect();
+    MockWebSocket.instances[0].onmessage({
+      data: JSON.stringify({
+        type: "tool_end",
+        tool: "calculator",
+        output: "division by zero",
+        error: true,
+      }),
+    });
+    expect(onToolEnd).toHaveBeenCalledWith("calculator", "division by zero", true);
   });
 
   it("calls onPermissionRequest with command", () => {

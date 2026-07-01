@@ -35,12 +35,8 @@ export default function App() {
   const fileInputRef = useRef(null);
   // Holds the id of the currently-streaming AI message
   const streamingIdRef = useRef(null);
-  // Refs to access latest state inside stable WS callbacks
-  const messagesRef = useRef([]);
+  // Ref to access latest conversation title inside stable WS callbacks
   const conversationTitleRef = useRef(null);
-
-  // Keep refs in sync with state
-  useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { conversationTitleRef.current = conversationTitle; }, [conversationTitle]);
 
   // Resizable sidebar (persisted)
@@ -135,12 +131,12 @@ export default function App() {
     setMessages((prev) => [...prev, msg]);
   }, []);
 
-  const updateToolCallOutput = useCallback((tool, output) => {
+  const updateToolCallOutput = useCallback((tool, output, error = false) => {
     setMessages((prev) => {
       const next = [...prev];
       for (let i = next.length - 1; i >= 0; i--) {
         if (next[i].type === "tool" && next[i].tool === tool && next[i].pending) {
-          next[i] = { ...next[i], output, pending: false };
+          next[i] = { ...next[i], output, pending: false, error };
           break;
         }
       }
@@ -189,8 +185,8 @@ export default function App() {
         });
       },
 
-      onToolEnd: (tool, output) => {
-        updateToolCallOutput(tool, output);
+      onToolEnd: (tool, output, error) => {
+        updateToolCallOutput(tool, output, error);
       },
 
       onPermissionRequest: (command) => {
@@ -198,23 +194,27 @@ export default function App() {
       },
 
       onDone: () => {
-        closeStreamingMessage();
+        streamingIdRef.current = null;
         setIsThinking(false);
-        // Save conversation after state settles
-        setTimeout(() => {
-          const currentMessages = messagesRef.current.map((m) =>
+        // Close any streaming message and save the finalized conversation in
+        // one pass. Using the functional setState form guarantees we're
+        // working from the latest messages array without needing a ref +
+        // setTimeout(0) to wait for state to "settle".
+        setMessages((prev) => {
+          const finalMessages = prev.map((m) =>
             m.streaming ? { ...m, streaming: false } : m
           );
-          const firstUserMsg = currentMessages.find((m) => m.type === "user");
+          const firstUserMsg = finalMessages.find((m) => m.type === "user");
           const autoTitle = (firstUserMsg?.content?.trim() || "New Conversation").slice(0, 40);
           const title = conversationTitleRef.current ?? autoTitle;
           if (!conversationTitleRef.current) {
             conversationTitleRef.current = autoTitle;
             setConversationTitle(autoTitle);
           }
-          socketRef.current?.sendSaveMessages(currentMessages, title);
+          socketRef.current?.sendSaveMessages(finalMessages, title);
           setConversationRefreshKey((k) => k + 1);
-        }, 0);
+          return finalMessages;
+        });
       },
 
       onHistoryRestored: (restoredMessages, title) => {
@@ -282,7 +282,7 @@ export default function App() {
 
   const handleSend = () => {
     const text = input.trim();
-    if ((!text && !selectedImages.length) || isThinking) return;
+    if ((!text && !selectedImages.length) || isThinking || !connected) return;
     const images = selectedImages.length
       ? selectedImages.map(({ data, mime_type }) => ({ data, mime_type }))
       : null;
@@ -443,7 +443,7 @@ export default function App() {
             <button
               className="px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-lg transition-colors self-end"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isThinking}
+              disabled={isThinking || !connected}
               title="Upload image"
             >
               🖼
@@ -451,16 +451,21 @@ export default function App() {
             <textarea
               className="flex-1 resize-none rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-blue-500 placeholder-gray-500"
               style={{ minHeight: 0 }}
-              placeholder="Ask anything… (Enter to send, Shift+Enter for newline)"
+              placeholder={
+                connected
+                  ? "Ask anything… (Enter to send, Shift+Enter for newline)"
+                  : "Reconnecting…"
+              }
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              disabled={isThinking}
+              disabled={isThinking || !connected}
             />
             <button
               className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium transition-colors self-end"
               onClick={handleSend}
-              disabled={isThinking || (!input.trim() && !selectedImages.length)}
+              disabled={isThinking || !connected || (!input.trim() && !selectedImages.length)}
+              title={!connected ? "Waiting for connection…" : undefined}
             >
               Send
             </button>

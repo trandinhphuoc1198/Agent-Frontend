@@ -60,7 +60,7 @@ export default function MessageBubble({ message }) {
   };
 
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-center"}`}>
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={`rounded-2xl px-4 py-2 text-sm break-words ${
           isUser
